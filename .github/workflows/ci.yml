@@ -94,7 +94,17 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Pull and restart
+        # Compose gives shell env vars precedence over ~/chitchat/.env when interpolating, so the
+        # DB credentials come from repo secrets without ever being written to disk on the runner.
+        env:
+          MSSQL_APP_USER: ${{ secrets.DBUSER }}
+          MSSQL_APP_PASSWORD: ${{ secrets.CHATDBPASSWORD }}
         run: |
+          # An unset secret expands to "" and would override .env with an empty password.
+          if [ -z "$MSSQL_APP_USER" ] || [ -z "$MSSQL_APP_PASSWORD" ]; then
+            echo "::error::DBUSER and CHATDBPASSWORD repository secrets must be set"
+            exit 1
+          fi
           cd ~/chitchat
           docker compose pull chitchat
           docker compose up -d

@@ -1,29 +1,21 @@
-import { useEffect, useState } from 'react'
-
-export function avatarUrl(userName: string, version?: number): string {
-  const base = `${import.meta.env.BASE_URL}api/avatar/${encodeURIComponent(userName)}`
-  return version ? `${base}?v=${version}` : base
-}
+import { useState } from 'react'
 
 function initialsOf(userName: string): string {
-  const trimmed = userName.trim()
-  return trimmed ? trimmed[0].toUpperCase() : '?'
+    const trimmed = userName.trim();
+    return trimmed ? trimmed[0].toUpperCase() : '?';
 }
 
 interface AvatarProps {
-  userName: string
-  src: string
-  size?: number
+    userName: string;
+    src: string;
+    size?: number;
 }
 
 export function Avatar({ userName, src, size = 38 }: AvatarProps) {
-  const [broken, setBroken] = useState(false)
-
-  // A re-upload changes `src` (new version query param) -- reset so the new image gets a
-  // fresh chance to load instead of sticking on a previous load failure.
-  useEffect(() => {
-    setBroken(false)
-  }, [src])
+  // Remember *which* src failed rather than a plain flag: a re-upload changes `src` (new
+  // version query param), so the new image automatically gets a fresh chance to load.
+    const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
+    const broken = brokenSrc === src;
 
   if (broken) {
     return (
@@ -39,7 +31,7 @@ export function Avatar({ userName, src, size = 38 }: AvatarProps) {
       src={src}
       alt={userName}
       style={{ width: size, height: size }}
-      onError={() => setBroken(true)}
+      onError={() => setBrokenSrc(src)}
     />
   )
 }

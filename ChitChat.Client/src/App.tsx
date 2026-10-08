@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type SubmitEvent } from 'react'
 import { useChat, type ChatMessage, type PrivateMessage } from './useChat'
-import { Avatar, avatarUrl } from './Avatar'
+import { Avatar } from './Avatar'
+import { avatarUrl } from './avatarUrl'
 import { logger } from './logger'
 import './App.css'
 
