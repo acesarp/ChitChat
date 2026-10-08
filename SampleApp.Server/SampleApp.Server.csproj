@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <ClientAppDirectory>..\Sample_App.Client\</ClientAppDirectory>
+  </PropertyGroup>
+
+  <!--
+    Builds the React client and copies its output into wwwroot so the server can serve it, for a local
+    `dotnet publish` outside Docker. Skipped when the client folder isn't present in the build context
+    (e.g. the Docker build, which builds and copies the client in its own stage instead).
+  -->
+  <Target Name="BuildAndCopyClient" BeforeTargets="Publish" Condition="Exists('$(ClientAppDirectory)package.json')">
+    <Exec Command="npm install" WorkingDirectory="$(ClientAppDirectory)" />
+    <Exec Command="npm run build" WorkingDirectory="$(ClientAppDirectory)" />
+    <ItemGroup>
+      <ClientDist Include="$(ClientAppDirectory)dist\**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ClientDist)" DestinationFolder="$(MSBuildProjectDirectory)\wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

@@ -1,0 +1,86 @@
+# This workflow builds and pushes a new container image to Amazon ECR, and then deploys a new
+# task definition to Amazon ECS, when there is a push to the "main" branch.
+#
+# Before this can run successfully you must:
+#
+# 1. Create the ECR repository (must match ECR_REPOSITORY below):
+#    aws ecr create-repository --repository-name sample-app --region us-east-1
+#
+# 2. Create an ECS cluster and service (must match ECS_CLUSTER / ECS_SERVICE below), and an IAM
+#    task execution role, e.g. via the ECS console "Getting Started" wizard:
+#      https://us-east-1.console.aws.amazon.com/ecs/home?region=us-east-1#/firstRun
+#
+# 3. Fill in the real values in .aws/task-definition.json (account ID, execution role ARN, image
+#    placeholder is already set and gets overwritten by this workflow on every deploy) and
+#    register it once, or let the first run of this workflow register it for you.
+#
+# 4. Store an IAM user access key in GitHub Actions secrets named `AWS_ACCESS_KEY_ID` and
+#    `AWS_SECRET_ACCESS_KEY` (Settings > Secrets and variables > Actions), scoped to the minimal
+#    ECR/ECS/PassRole permissions needed to push images and deploy this service.
+
+name: Deploy to Amazon ECS
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: sample-app
+  ECS_SERVICE: sample-app-service
+  ECS_CLUSTER: sample-app-cluster
+  ECS_TASK_DEFINITION: .aws/task-definition.json
+  CONTAINER_NAME: sample-app
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Build a docker container and
+        # push it to ECR so that it can
+        # be deployed to ECS.
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    - name: Fill in the new image ID in the Amazon ECS task definition
+      id: task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: ${{ env.ECS_TASK_DEFINITION }}
+        container-name: ${{ env.CONTAINER_NAME }}
+        image: ${{ steps.build-image.outputs.image }}
+
+    - name: Deploy Amazon ECS task definition
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
