@@ -1,6 +1,8 @@
+name: chitchat
+
 services:
-  chit-chat:
-    image: ghcr.io/acesarp/chit-chat:latest
+  chitchat:
+    image: ghcr.io/acesarp/chitchat:latest
     build:
       context: .
       dockerfile: Dockerfile
