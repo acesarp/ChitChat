@@ -2,9 +2,11 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace ChitChat.Server;
 
-// Logs failed hub calls with who made them, telling expected rejections (HubException: rate
-// limit, validation) apart from real failures. Replaces SignalR's own dispatcher logging, which
-// reports both as errors with no user attached (see the override in Program.cs).
+/// <summary>
+/// Logs failed hub calls with who made them, telling expected rejections (HubException: rate limit, validation)<br />
+/// apart from real failures. Replaces SignalR's own dispatcher logging, which
+/// reports both as errors with no user attached
+/// </summary>
 public class HubLoggingFilter(ILogger<ChatHub> logger) : IHubFilter {
 	public async ValueTask<object?> InvokeMethodAsync(
 		HubInvocationContext invocationContext,

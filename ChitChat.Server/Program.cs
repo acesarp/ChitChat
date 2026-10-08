@@ -9,52 +9,36 @@ using Serilog.Events;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-// Bootstrap logger so startup failures (bad config, DB unreachable) are still written somewhere;
-// it's replaced by the fully configured logger once the host is built.
-Log.Logger = new LoggerConfiguration()
-	.WriteTo.Console()
-	.CreateBootstrapLogger();
+Log.Logger = new LoggerConfiguration().WriteTo.Console()
+																			.CreateBootstrapLogger();
 
-// Serilog swallows its own sink failures (e.g. the Logs table missing or not writable) --
-// surface them on stderr instead of losing database logging silently.
 Serilog.Debugging.SelfLog.Enable(Console.Error);
 
 try {
 	var builder = WebApplication.CreateBuilder(args);
 
-	builder.Services.AddSerilog((services, logger) => logger
-		.ReadFrom.Configuration(builder.Configuration)
-		.ReadFrom.Services(services)
-		// HubLoggingFilter already logs every failed hub call, with the caller's name, and logs
-		// the expected HubException rejections ("too fast") as warnings. SignalR's own dispatcher
-		// would log each of those again as an Error.
-		.MinimumLevel.Override("Microsoft.AspNetCore.SignalR.Internal.DefaultHubDispatcher", LogEventLevel.Fatal)
-		.WriteToDatabase(builder.Configuration));
+	builder.Services.AddSerilog((services, logger) => logger.ReadFrom.Configuration(builder.Configuration)
+																																.ReadFrom.Services(services)
+																																.MinimumLevel.Override("Microsoft.AspNetCore.SignalR.Internal.DefaultHubDispatcher", LogEventLevel.Fatal)
+																																.WriteToDatabase(builder.Configuration));
 
 	const string ClientCorsPolicy = "ClientCorsPolicy";
 
 	builder.Services.AddOpenApi();
 	builder.Services.AddSignalR(options => {
 		options.AddFilter<HubLoggingFilter>();
-		// Default is 32KB, too small for a voice message or photo sent as a hub method argument.
-		// Media travels base64-encoded (~1.33x inflation) on top of the 5MB raw cap in ChatHub.
-		options.MaximumReceiveMessageSize = 8 * 1024 * 1024;
-	}).AddJsonProtocol(options =>
-		// SendMessageRequest.Kind arrives as "text" / "audio" / "photo".
-		options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
+		options.MaximumReceiveMessageSize = 8 * 1024 * 1024; // Media travels base64-encoded (~1.33x inflation) on top of the 5MB raw cap in ChatHub.
+	}).AddJsonProtocol(options => options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
 
 	builder.Services.AddDbContext<ChatDbContext>(options =>
-		options.UseSqlServer(
-			builder.Configuration.GetConnectionString("Chat"),
-			sql => sql.EnableRetryOnFailure()));
+								options.UseSqlServer(builder.Configuration.GetConnectionString("Chat"), sql => sql.EnableRetryOnFailure()));
 
 	builder.Services.AddCors(options => {
 		options.AddPolicy(ClientCorsPolicy, policy => {
-			policy
-				.WithOrigins("http://localhost:39294", "https://localhost:39294")
-				.AllowAnyHeader()
-				.AllowAnyMethod()
-				.AllowCredentials();
+			policy.WithOrigins("http://localhost:39294", "https://localhost:39294")
+					.AllowAnyHeader()
+					.AllowAnyMethod()
+					.AllowCredentials();
 		});
 	});
 
@@ -63,7 +47,6 @@ try {
 	using (var scope = app.Services.CreateScope()) {
 		var db = scope.ServiceProvider.GetRequiredService<ChatDbContext>();
 		db.Database.EnsureCreated();
-		DatabaseLogging.EnsureLogsTable(db, app.Logger);
 	}
 
 	app.UseSerilogRequestLogging(options => {
@@ -79,7 +62,6 @@ try {
 			if (status == StatusCodes.Status404NotFound && httpContext.Request.Path.StartsWithSegments("/api/avatar")) {
 				return LogEventLevel.Debug;
 			}
-
 			return status >= 400 ? LogEventLevel.Warning : LogEventLevel.Debug;
 		};
 	});
@@ -94,10 +76,11 @@ try {
 	app.UseDefaultFiles();
 	app.UseStaticFiles();
 
-	const int MaxAvatarBytes = 1_000_000; // 1 MB
+	const int MaxAvatarBytes = 1_000_000;
 	const int MaxAvatarUserNameLength = 30; // matches ChatHub's own cap, so lookups always match a Join()'d name
 	var allowedAvatarContentTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/webp", "image/gif" };
 
+	#region http-endpoints
 	app.MapPost("/api/avatar", async (HttpRequest request, ChatDbContext db, ILogger<Program> logger) => {
 		if (!request.HasFormContentType) {
 			return Results.BadRequest("Expected multipart form data.");
@@ -173,15 +156,6 @@ try {
 		return Results.File(entity.PhotoData, entity.PhotoContentType ?? "application/octet-stream");
 	});
 
-	// Not real auth (there are no accounts), but keeps a stranger who merely guesses an id from
-	// seeing someone else's private voice message or photo -- the caller has to at least claim
-	// to be one of the two parties, same trust level as the rest of the app.
-	static bool IsParty(PrivateMessageEntity entity, string? viewer) {
-		var trimmedViewer = (viewer ?? string.Empty).Trim();
-		return string.Equals(trimmedViewer, entity.FromUserName, StringComparison.Ordinal)
-			|| string.Equals(trimmedViewer, entity.ToUserName, StringComparison.Ordinal);
-	}
-
 	app.MapGet("/api/private-audio-message/{id:int}", async (int id, string viewer, ChatDbContext db, ILogger<Program> logger) => {
 		var entity = await db.PrivateMessages.FindAsync(id);
 		if (entity?.AudioData is null) {
@@ -209,15 +183,26 @@ try {
 
 		return Results.File(entity.PhotoData, entity.PhotoContentType ?? "application/octet-stream");
 	});
+	#endregion http-endpoints
 
 	app.MapClientLogs();
 	app.MapHub<ChatHub>("/chatHub");
 	app.MapFallbackToFile("index.html");
 
 	app.Run();
-} catch (Exception ex) when (ex is not HostAbortedException) {
+}
+catch (Exception ex) when (ex is not HostAbortedException) {
 	// HostAbortedException is how EF tooling (dotnet ef) stops the host on purpose -- not a crash.
 	Log.Fatal(ex, "ChitChat server terminated unexpectedly");
-} finally {
+}
+finally {
 	Log.CloseAndFlush();
+}
+
+// Not real auth (there are no accounts), but keeps a stranger who merely guesses an id from
+// seeing someone else's private voice message or photo -- the caller has to at least claim
+// to be one of the two parties, same trust level as the rest of the app.
+static bool IsParty(PrivateMessageEntity entity, string? viewer) {
+	var trimmedViewer = (viewer ?? string.Empty).Trim();
+	return string.Equals(trimmedViewer, entity.FromUserName, StringComparison.Ordinal) || string.Equals(trimmedViewer, entity.ToUserName, StringComparison.Ordinal);
 }
