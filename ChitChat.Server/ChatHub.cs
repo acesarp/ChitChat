@@ -93,6 +93,11 @@ public class ChatHub(ChatDbContext db) : Hub {
 		});
 	}
 
+	public async Task SendAttachmentMessage(string imageBase64, string contentType) {
+		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var userName)) {
+			throw new HubException("Join the chat before sending messages.");
+		}
+
 	public async Task SendAudioMessage(string audioBase64, string contentType) {
 		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var userName)) {
 			throw new HubException("Join the chat before sending messages.");
@@ -105,10 +110,14 @@ public class ChatHub(ChatDbContext db) : Hub {
 		var audioData = DecodeAudio(audioBase64);
 		ValidateAudio(audioData, contentType);
 
+		var attachmentData = DecodeAudio(attachmentBase64);
+		ValidateAudio(attachmentData, contentType);
+
 		var entity = new ChatMessageEntity {
 			UserName = userName,
 			Message = "",
 			AudioData = audioData,
+			AttachmentData = attachmentData,
 			AudioContentType = contentType,
 			SentAt = DateTimeOffset.UtcNow
 		};

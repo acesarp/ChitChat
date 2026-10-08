@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type SubmitEvent } from 'react'
 import { useChat, type ChatMessage, type PrivateMessage } from './useChat'
 import { Avatar, avatarUrl } from './Avatar'
 import './App.css'
@@ -27,54 +27,54 @@ function readStoredActivePrivateChat(): string | null {
 }
 
 function formatTimestamp(iso: string): string {
-  const date = new Date(iso)
-  const now = new Date()
-  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    const date = new Date(iso);
+    const now = new Date();
+    const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   if (date.toDateString() === now.toDateString()) {
-    return time
+      return time;
   }
-  const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-  return `${day}, ${time}`
+    const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `${day}, ${time}`;
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
   // chunked to avoid blowing the call stack on String.fromCharCode(...bytes) for large clips
-  const chunkSize = 0x8000
+    const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
   }
-  return btoa(binary)
+    return btoa(binary);
 }
 
 function pickSupportedAudioMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') {
-    return undefined
+      return undefined;
   }
-  return PREFERRED_AUDIO_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type))
+    return PREFERRED_AUDIO_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
 }
 
 function audioMessageSrc(msg: ChatMessage | PrivateMessage, viewer: string): string {
   if ('userName' in msg) {
-    return `${import.meta.env.BASE_URL}api/audio-message/${msg.id}`
+      return `${import.meta.env.BASE_URL}api/audio-message/${msg.id}`;
   }
-  return `${import.meta.env.BASE_URL}api/private-audio-message/${msg.id}?viewer=${encodeURIComponent(viewer)}`
+    return `${import.meta.env.BASE_URL}api/private-audio-message/${msg.id}?viewer=${encodeURIComponent(viewer)}`;
 }
 
 function App() {
-  const [userName, setUserName] = useState<string | null>(readStoredUserName)
-  const [nameInput, setNameInput] = useState('')
-  const [messageInput, setMessageInput] = useState('')
-  const [activePrivateChat, setActivePrivateChat] = useState<string | null>(readStoredActivePrivateChat)
-  const [avatarVersion, setAvatarVersion] = useState(() => Date.now())
-  const [avatarUploading, setAvatarUploading] = useState(false)
-  const [avatarError, setAvatarError] = useState<string | null>(null)
-  const [isRecording, setIsRecording] = useState(false)
-  const [recordingSeconds, setRecordingSeconds] = useState(0)
-  const [audioError, setAudioError] = useState<string | null>(null)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+    const [userName, setUserName] = useState<string | null>(readStoredUserName);
+    const [nameInput, setNameInput] = useState('');
+    const [messageInput, setMessageInput] = useState('');
+    const [activePrivateChat, setActivePrivateChat] = useState<string | null>(readStoredActivePrivateChat);
+    const [avatarVersion, setAvatarVersion] = useState(() => Date.now());
+    const [avatarUploading, setAvatarUploading] = useState(false);
+    const [avatarError, setAvatarError] = useState<string | null>(null);
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingSeconds, setRecordingSeconds] = useState(0);
+    const [audioError, setAudioError] = useState<string | null>(null);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const {
     messages,
     privateMessages,
@@ -88,11 +88,11 @@ function App() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const avatarInputRef = useRef<HTMLInputElement>(null);
     const photoInputRef = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<number | null>(null);
-  const activePrivateChatRef = useRef(activePrivateChat);
-  activePrivateChatRef.current = activePrivateChat;
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
+    const recordingTimerRef = useRef<number | null>(null);
+    const activePrivateChatRef = useRef(activePrivateChat);
+    activePrivateChatRef.current = activePrivateChat;
 
   const activeMessages = activePrivateChat ? privateMessages[activePrivateChat] ?? [] : messages;
 
@@ -114,50 +114,50 @@ function App() {
   }
 
   function backToLobby() {
-    setActivePrivateChat(null)
+      setActivePrivateChat(null);
     try {
-      localStorage.removeItem(ACTIVE_PRIVATE_CHAT_STORAGE_KEY)
+        localStorage.removeItem(ACTIVE_PRIVATE_CHAT_STORAGE_KEY);
     } catch {
       // ignore
     }
   }
 
-  function handleJoin(event: FormEvent) {
-    event.preventDefault()
-    const trimmed = nameInput.trim()
+    function handleJoin(event: SubmitEvent<HTMLFormElement>) {
+      event.preventDefault();
+      const trimmed = nameInput.trim();
     if (trimmed) {
       try {
-        localStorage.setItem(USER_NAME_STORAGE_KEY, trimmed)
+          localStorage.setItem(USER_NAME_STORAGE_KEY, trimmed);
       } catch {
         // ignore storage failures (e.g. private browsing) -- session just won't persist
       }
-      setUserName(trimmed)
+        setUserName(trimmed);
     }
   }
 
   function handleLeave() {
-    stopRecording()
+      stopRecording();
     try {
-      localStorage.removeItem(USER_NAME_STORAGE_KEY)
-      localStorage.removeItem(ACTIVE_PRIVATE_CHAT_STORAGE_KEY)
+        localStorage.removeItem(USER_NAME_STORAGE_KEY);
+        localStorage.removeItem(ACTIVE_PRIVATE_CHAT_STORAGE_KEY);
     } catch {
       // ignore
     }
-    setUserName(null)
-    setActivePrivateChat(null)
-    setIsSidebarOpen(false)
+      setUserName(null);
+      setActivePrivateChat(null);
+      setIsSidebarOpen(false);
   }
 
-  function handleSend(event: FormEvent) {
-    event.preventDefault()
-    const trimmed = messageInput.trim()
+    function handleSend(event: SubmitEvent<HTMLFormElement>) {
+      event.preventDefault();
+      const trimmed = messageInput.trim();
     if (trimmed) {
       if (activePrivateChat) {
-        sendPrivateMessage(activePrivateChat, trimmed)
+        sendPrivateMessage(activePrivateChat, trimmed);
       } else {
-        sendMessage(trimmed)
+        sendMessage(trimmed);
       }
-      setMessageInput('')
+      setMessageInput('');
     }
   }
 
@@ -177,18 +177,18 @@ function App() {
         return;
     }
 
-    setAvatarUploading(true)
-    setAvatarError(null)
+      setAvatarUploading(true);
+      setAvatarError(null);
     try {
-      const formData = new FormData()
-      formData.append('userName', userName)
-      formData.append('file', file)
+        const formData = new FormData();
+        formData.append('userName', userName);
+        formData.append('file', file);
       const response = await fetch(`${import.meta.env.BASE_URL}api/avatar`, {
         method: 'POST',
         body: formData,
       })
       if (!response.ok) {
-        throw new Error((await response.text()) || 'Upload failed.')
+          throw new Error((await response.text()) || 'Upload failed.');
       }
         setAvatarVersion(Date.now());
     } catch (error) {
@@ -233,46 +233,42 @@ function App() {
       }
 
       recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop())
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' })
-        audioChunksRef.current = []
-        void sendRecordedAudio(blob)
+          stream.getTracks().forEach((track) => track.stop());
+          const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' });
+          audioChunksRef.current = [];
+          void sendRecordedAudio(blob);
       }
 
-      recorder.start()
-      mediaRecorderRef.current = recorder
-      setIsRecording(true)
-      setRecordingSeconds(0)
+        recorder.start();
+        mediaRecorderRef.current = recorder;
+        setIsRecording(true);
+        setRecordingSeconds(0);
       recordingTimerRef.current = window.setInterval(() => {
         setRecordingSeconds((seconds) => {
-          const next = seconds + 1
+            const next = seconds + 1;
           if (next >= MAX_RECORDING_SECONDS) {
-            stopRecording()
+              stopRecording();
           }
-          return next
-        })
-      }, 1000)
+          return next;
+        });
+      }, 1000); 
     } catch {
-      setAudioError('Microphone access was denied or is unavailable.')
+        setAudioError('Microphone access was denied or is unavailable.');
     }
   }
 
   async function sendRecordedAudio(blob: Blob) {
     if (blob.size === 0) {
-      return
+        return;
     }
-    const base64 = await blobToBase64(blob)
-    const target = activePrivateChatRef.current
+      const base64 = await blobToBase64(blob);
+      const target = activePrivateChatRef.current;
     if (target) {
-      sendPrivateAudioMessage(target, base64, blob.type)
+        sendPrivateAudioMessage(target, base64, blob.type);
     } else {
-      sendAudioMessage(base64, blob.type)
+        sendAudioMessage(base64, blob.type);
     }
   }
-  
-  function uploadPhoto() {
-    avatarInputRef.current?.click()
-  } 
 
   function toggleRecording() {
     if (isRecording) {
@@ -280,7 +276,25 @@ function App() {
     } else {
       void startRecording()
     }
-  }
+    }
+
+    /*--------------------- photo upload ---------------------*/
+    function uploadPhoto() {
+        photoInputRef.current?.click();
+    };
+    async function sendPhoto(blob: Blob) {
+        if (blob.size === 0) {
+            return;
+        }
+        const base64 = await blobToBase64(blob);
+        const target = activePrivateChatRef.current;
+        if (target) {
+            sendPrivatePhotoMessage(target, base64, blob.type);
+        } else {
+            sendPhotoMessage(base64, blob.type);
+        }
+    }
+/*--------------------------------------------------------*/
 
   if (!userName) {
     return (
@@ -314,22 +328,13 @@ function App() {
           <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Chit Chat" />
         </div>
         <h2>Lobby</h2>
-        <p className={`status ${isConnected ? 'online' : 'offline'}`}>
-          {isConnected ? 'Connected' : 'Connecting…'}
-        </p>
+        <p className={`status ${isConnected ? 'online' : 'offline'}`}> {isConnected ? 'Connected' : 'Connecting…'} </p>
 
-        <input
-          ref={avatarInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          onChange={handleAvatarSelected}
-          className="avatar-input"
-        />
+        <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarSelected} className="avatar-input"/>
 
         <h3>Online ({onlineUsers.length})</h3>
         <ul className="online-users">
-          {onlineUsers.map((name) =>
-            name === userName ? (
+          {onlineUsers.map((name) =>  name === userName ? (
               <li key={name}>
                 <span className="user-entry self">
                   <button
@@ -380,9 +385,7 @@ function App() {
           </>
         )}
 
-        <button type="button" className="leave-button" onClick={handleLeave}>
-          Leave chat
-        </button>
+        <button type="button" className="leave-button" onClick={handleLeave}> Leave chat </button>
       </aside>
 
       <main className="chat-main">
@@ -416,11 +419,7 @@ function App() {
               <div key={msg.id} className={`message ${isOwn ? 'own' : ''} ${isSystem ? 'system' : ''}`}>
                 {!isSystem && (
                   <div className="message-header">
-                    <Avatar
-                      userName={author}
-                      src={avatarUrl(author, isOwn ? avatarVersion : undefined)}
-                      size={AVATAR_SIZE}
-                    />
+                    <Avatar userName={author} src={avatarUrl(author, isOwn ? avatarVersion : undefined)} size={AVATAR_SIZE} />
                     <span className="message-author">{author}</span>
                     <span className="message-time">{formatTimestamp(msg.sentAt)}</span>
                   </div>
@@ -445,8 +444,16 @@ function App() {
             placeholder={activePrivateChat ? `Message ${activePrivateChat}…` : 'Type a message…'}
             maxLength={500}
             autoFocus
-          />
-          <button type="button" className="photo-button" onClick={uploadPhoto} disabled={!isConnected}  title={'Send a photo'}>📸</button>
+                  />
+
+                  <button type="button" className="photo-button" onClick={uploadPhoto} disabled={!isConnected} title={'Send a photo'}>📸</button>
+                  <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      onChange={handlePhotoSelected}
+                      className="photo-input"
+                  />
           <button
             type="button"
             className={`mic-button ${isRecording ? 'recording' : ''}`}
