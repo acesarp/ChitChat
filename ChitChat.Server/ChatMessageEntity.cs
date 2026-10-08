@@ -6,6 +6,7 @@ public class ChatMessageEntity {
 	public string Message { get; set; } = "";
 	public DateTimeOffset SentAt { get; set; }
 	public byte[]? AudioData { get; set; }
-	public byte[]? AttachmentData { get; set; }
+	public byte[]? PhotoData { get; set; }
 	public string? AudioContentType { get; set; }
+	public string? PhotoContentType { get; set; }
 }

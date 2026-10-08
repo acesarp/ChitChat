@@ -22,6 +22,10 @@ WORKDIR /app
 COPY --from=server-build --chown=app:app /app/publish .
 COPY --from=client-build --chown=app:app /src/client/dist ./wwwroot
 
+# Serilog's rolling file sink writes to logs/ under the content root; /app itself is owned by
+# root, so the non-root app user needs its own writable folder there.
+RUN mkdir -p /app/logs && chown app:app /app/logs
+
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 USER app

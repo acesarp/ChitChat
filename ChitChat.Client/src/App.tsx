@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type SubmitEvent } from 'react'
 import { useChat, type ChatMessage, type PrivateMessage } from './useChat'
 import { Avatar, avatarUrl } from './Avatar'
+import { logger } from './logger'
 import './App.css'
 
 const USER_NAME_STORAGE_KEY = 'sample-app.chat.userName'
@@ -192,6 +193,7 @@ function App() {
       }
         setAvatarVersion(Date.now());
     } catch (error) {
+        logger.warn('Avatar upload failed:', error);
         setAvatarError(error instanceof Error ? error.message : 'Upload failed.');
     } finally {
         setAvatarUploading(false);
@@ -216,6 +218,7 @@ function App() {
       setAudioError(null);
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      logger.warn('Voice messages unavailable: no navigator.mediaDevices.getUserMedia in this browser/context.')
       setAudioError('Voice messages need microphone access, which this browser/context does not allow.')
       return
     }
@@ -252,7 +255,8 @@ function App() {
           return next;
         });
       }, 1000); 
-    } catch {
+    } catch (error) {
+        logger.warn('Could not start voice recording:', error);
         setAudioError('Microphone access was denied or is unavailable.');
     }
   }

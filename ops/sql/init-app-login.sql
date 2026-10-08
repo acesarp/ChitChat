@@ -34,3 +34,7 @@ GO
 -- Avatars are upserted in place (re-uploading replaces the row), so this one also needs UPDATE.
 GRANT SELECT, INSERT, UPDATE ON dbo.Avatars TO chatapp;
 GO
+
+-- Logs are append-only from the app's side (Serilog's MSSqlServer sink, plain INSERTs).
+GRANT INSERT ON dbo.Logs TO chatapp;
+GO

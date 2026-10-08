@@ -11,7 +11,7 @@ public class ChatHub(ChatDbContext db) : Hub {
 	private const int MaxUserNameLength = 30;
 	private const int MaxMessageLength = 500;
 	private const int MaxMessagesPerWindow = 10;
-	private const int MaxAudioBytes = 5_000_000; // 5 MB, generous headroom over a 60s opus clip
+	private const int MaxMediaBytes = 5_000_000; // 5 MB, generous headroom over a 60s opus clip
 	private static readonly TimeSpan RateWindow = TimeSpan.FromSeconds(10);
 
 	private static readonly ConcurrentDictionary<string, string> ConnectedUsers = new();
@@ -93,32 +93,44 @@ public class ChatHub(ChatDbContext db) : Hub {
 		});
 	}
 
-	public async Task SendAttachmentMessage(string imageBase64, string contentType) {
+	public async Task SendPhotoMessage(string imageBase64, string contentType) => await SendMediaMessage(imageBase64, contentType);
+
+	public async Task SendAudioMessage(string audioBase64, string contentType) => await SendMediaMessage(audioBase64, contentType);
+
+	public async Task SendMediaMessage(string dataBase64, string contentType) {
 		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var userName)) {
 			throw new HubException("Join the chat before sending messages.");
 		}
-
-	public async Task SendAudioMessage(string audioBase64, string contentType) {
-		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var userName)) {
-			throw new HubException("Join the chat before sending messages.");
-		}
-
 		if (IsRateLimited(Context.ConnectionId)) {
 			throw new HubException("You're sending messages too fast. Please slow down.");
 		}
 
-		var audioData = DecodeAudio(audioBase64);
-		ValidateAudio(audioData, contentType);
+		var mediaData = DecodeMedia(dataBase64);
+		ValidateMedia(mediaData, contentType);
 
-		var attachmentData = DecodeAudio(attachmentBase64);
-		ValidateAudio(attachmentData, contentType);
+		byte[]? audioData = null;
+		byte[]? photoData = null;
+		string photoContentType = "";
+		string audioContentType = "";
+		if (contentType.StartsWith("audio/")) {
+			audioData = mediaData;
+			audioContentType = contentType;
+		}
+		else if (contentType.StartsWith("image/")) {
+			photoData = mediaData;
+			photoContentType = contentType;
+		}
+		else {
+			throw new HubException($"Unsupported media format: {contentType}");
+		}
 
 		var entity = new ChatMessageEntity {
 			UserName = userName,
 			Message = "",
 			AudioData = audioData,
-			AttachmentData = attachmentData,
-			AudioContentType = contentType,
+			PhotoData = photoData,
+			AudioContentType = audioContentType,
+			PhotoContentType = photoContentType,
 			SentAt = DateTimeOffset.UtcNow
 		};
 		db.Messages.Add(entity);
@@ -129,7 +141,8 @@ public class ChatHub(ChatDbContext db) : Hub {
 			userName = entity.UserName,
 			message = entity.Message,
 			sentAt = entity.SentAt,
-			audioContentType = entity.AudioContentType
+			audioContentType = entity.AudioContentType,
+			photoContentType = entity.PhotoContentType
 		});
 	}
 
@@ -212,8 +225,8 @@ public class ChatHub(ChatDbContext db) : Hub {
 			throw new HubException("You can't send a private message to yourself.");
 		}
 
-		var audioData = DecodeAudio(audioBase64);
-		ValidateAudio(audioData, contentType);
+		var audioData = DecodeMedia(audioBase64);
+		ValidateMedia(audioData, contentType);
 
 		var entity = new PrivateMessageEntity {
 			FromUserName = fromUserName,
@@ -239,28 +252,28 @@ public class ChatHub(ChatDbContext db) : Hub {
 		await Clients.Group(fromUserName).SendAsync("ReceivePrivateMessage", payload);
 	}
 
-	private static byte[] DecodeAudio(string audioBase64) {
+	private static byte[] DecodeMedia(string base64) {
 		// The JSON hub protocol has no native binary type, so the client sends audio as base64
 		// text rather than a byte[] argument (which would otherwise serialize to "{}").
 		try {
-			return Convert.FromBase64String(audioBase64 ?? string.Empty);
+			return Convert.FromBase64String(base64 ?? string.Empty);
 		}
 		catch (FormatException) {
 			throw new HubException("Invalid audio data.");
 		}
 	}
 
-	private static void ValidateAudio(byte[] audioData, string contentType) {
-		if (audioData is null || audioData.Length == 0) {
-			throw new HubException("No audio received.");
+	private static void ValidateMedia(byte[] mediaData, string contentType) {
+		if (mediaData is null || mediaData.Length == 0) {
+			throw new HubException("No media received.");
 		}
 
-		if (audioData.Length > MaxAudioBytes) {
-			throw new HubException("Voice message is too long.");
+		if (mediaData.Length > MaxMediaBytes) {
+			throw new HubException("Media is too large.");
 		}
 
 		if (string.IsNullOrWhiteSpace(contentType) || !contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)) {
-			throw new HubException("Unsupported audio format.");
+			throw new HubException("Unsupported media format.");
 		}
 	}
 

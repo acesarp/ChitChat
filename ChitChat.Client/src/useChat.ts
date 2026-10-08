@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
+import { logger } from './logger'
 
 export interface ChatMessage {
     id: number;
@@ -51,6 +52,7 @@ export function useChat(userName: string | null) {
     const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
+    logger.setUserName(userName);
     if (!userName) {
         return;
     }
@@ -116,14 +118,20 @@ export function useChat(userName: string | null) {
 
     // A reconnect gets a new connection id the server has no Join record for, so every send
     // would fail with "Join the chat before sending messages" -- re-join before re-enabling input.
-    connection.onreconnecting(() => setIsConnected(false))
+    connection.onreconnecting((error) => {
+        setIsConnected(false);
+        logger.warn('SignalR connection lost, reconnecting.', error);
+    })
       connection.onreconnected(() =>
           connection
               .invoke('Join', userName)
-              .then(() => setIsConnected(true))
+              .then(() => {
+                  setIsConnected(true);
+                  logger.info('SignalR reconnected and re-joined.');
+              })
               .catch((error) => {
                   // Connected but not joined is useless -- drop it so onclose starts over cleanly.
-                  console.error('SignalR re-join failed:', error);
+                  logger.error('SignalR re-join failed:', error);
                   connection.stop();
               }),
       );
@@ -139,11 +147,16 @@ export function useChat(userName: string | null) {
         .start()
         .then(() => connection.invoke('Join', userName))
         .then(() => {
+            if (startAttempts > 0) {
+                logger.info(`SignalR connected after ${startAttempts} failed attempt(s).`);
+            }
             startAttempts = 0;
             setIsConnected(true);
         })
         .catch((error) => {
-          console.error('SignalR connection failed:', error)
+          // A warning, not an error: it's retried indefinitely, and while the server is down
+          // these can't be uploaded anyway -- they go up in one batch once it's back.
+            logger.warn('SignalR connection failed:', error);
           if (connection.state === HubConnectionState.Connected) {
               connection.stop(); // onclose schedules the retry
           } else {
@@ -160,8 +173,11 @@ export function useChat(userName: string | null) {
       retryTimer = setTimeout(connect, delay)
     }
 
-    connection.onclose(() => {
+    connection.onclose((error) => {
         setIsConnected(false);
+        if (error && !disposed) {
+            logger.warn('SignalR connection closed.', error);
+        }
         scheduleConnect();
     })
 
@@ -188,22 +204,22 @@ export function useChat(userName: string | null) {
         return;
       }
 
-      connection.invoke('SendMessage', message).catch((error) => console.error('Send failed:', error));
+      connection.invoke('SendMessage', message).catch((error) => logger.error('Send failed:', error));
     },
     [userName],
   );
 
   const sendPrivateMessage = useCallback(
-    (toUserName: string, message: string) => {
-          const connection = connectionRef.current;
-      if (!connection || connection.state !== HubConnectionState.Connected || !userName) {
-          return;
-      }
+        (toUserName: string, message: string) => {
+              const connection = connectionRef.current;
+          if (!connection || connection.state !== HubConnectionState.Connected || !userName) {
+              return;
+          }
 
           connection.invoke('SendPrivateMessage', toUserName, message)
-                            .catch((error) => console.error('Private send failed:', error));
-    },
-    [userName],
+                            .catch((error) => logger.error('Private send failed:', error));
+        },
+        [userName],
   );
 
     const sendAudioMessage = useCallback(
@@ -214,7 +230,7 @@ export function useChat(userName: string | null) {
             }
 
             connection.invoke('SendAudioMessage', audioBase64, contentType)
-                .catch((error) => console.error('Audio send failed:', error));
+                .catch((error) => logger.error('Audio send failed:', error));
         },
         [userName],
     );
@@ -226,9 +242,8 @@ export function useChat(userName: string | null) {
                 return;
             }
 
-            connection
-                .invoke('SendPrivateAudioMessage', toUserName, audioBase64, contentType)
-                .catch((error) => console.error('Private audio send failed:', error));
+            connection.invoke('SendPrivateAudioMessage', toUserName, audioBase64, contentType)
+                .catch((error) => logger.error('Private audio send failed:', error));
         },
         [userName],
     );
