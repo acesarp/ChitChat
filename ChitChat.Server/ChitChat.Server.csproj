@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -12,7 +12,7 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <ClientAppDirectory>..\Sample_App.Client\</ClientAppDirectory>
+    <ClientAppDirectory>..\ChitChat.Client\</ClientAppDirectory>
   </PropertyGroup>
 
   <!--

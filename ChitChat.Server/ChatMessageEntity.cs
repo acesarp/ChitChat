@@ -1,10 +1,9 @@
-namespace SampleApp.Server;
+namespace ChitChat.Server;
 
-public class PrivateMessageEntity
+public class ChatMessageEntity
 {
     public int Id { get; set; }
-    public string FromUserName { get; set; } = "";
-    public string ToUserName { get; set; } = "";
+    public string UserName { get; set; } = "";
     public string Message { get; set; } = "";
     public DateTimeOffset SentAt { get; set; }
     public byte[]? AudioData { get; set; }

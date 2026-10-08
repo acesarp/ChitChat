@@ -23,17 +23,17 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore SampleApp.Server/SampleApp.Server.csproj
+        run: dotnet restore ChitChat.Server/ChitChat.Server.csproj
 
       - name: Build
-        run: dotnet build SampleApp.Server/SampleApp.Server.csproj --no-restore -c Release
+        run: dotnet build ChitChat.Server/ChitChat.Server.csproj --no-restore -c Release
 
   client:
     name: Build client (React)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: Sample_App.Client
+        working-directory: ChitChat.Client
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +42,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: Sample_App.Client/package-lock.json
+          cache-dependency-path: ChitChat.Client/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -77,8 +77,8 @@ jobs:
           context: .
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/sample-app:latest
-            ghcr.io/${{ github.repository_owner }}/sample-app:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/chitchat:latest
+            ghcr.io/${{ github.repository_owner }}/chitchat:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -89,14 +89,14 @@ jobs:
     # pull_request event is refs/pull/N/merge, never refs/heads/main, so a PR (including
     # from a fork, now that this repo is public) can never satisfy this condition and
     # reach the runner. Do not add a self-hosted job that responds to pull_request.
-    runs-on: [ self-hosted, sample-app ]
+    runs-on: [ self-hosted, chitchat ]
     needs: docker
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Pull and restart
         run: |
-          cd ~/sample-app
-          docker compose pull sample-app
+          cd ~/chitchat
+          docker compose pull chitchat
           docker compose up -d
-          docker compose up -d --no-deps --force-recreate sample-app
+          docker compose up -d --no-deps --force-recreate chitchat
           docker image prune -f
