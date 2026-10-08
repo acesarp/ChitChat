@@ -4,8 +4,8 @@ import { Avatar, avatarUrl } from './Avatar'
 import { logger } from './logger'
 import './App.css'
 
-const USER_NAME_STORAGE_KEY = 'sample-app.chat.userName'
-const ACTIVE_PRIVATE_CHAT_STORAGE_KEY = 'sample-app.chat.activePrivateChat'
+const USER_NAME_STORAGE_KEY = 'chit-chat.chat.userName'
+const ACTIVE_PRIVATE_CHAT_STORAGE_KEY = 'chit-chat.chat.activePrivateChat'
 const MAX_AVATAR_BYTES = 1_000_000
 const AVATAR_SIZE = 30
 const MAX_RECORDING_SECONDS = 60

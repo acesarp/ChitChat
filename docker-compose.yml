@@ -1,6 +1,6 @@
 services:
-  sample-app:
-    image: ghcr.io/acesarp/sample-app:latest
+  chit-chat:
+    image: ghcr.io/acesarp/chit-chat:latest
     build:
       context: .
       dockerfile: Dockerfile

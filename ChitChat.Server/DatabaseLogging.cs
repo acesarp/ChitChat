@@ -65,7 +65,7 @@ public static class DatabaseLogging {
 	// ops/sql/create-logs-table.sql -- and this is a no-op once it exists.
 	public static void EnsureLogsTable(ChatDbContext db, Microsoft.Extensions.Logging.ILogger logger) {
 		try {
-			db.Database.ExecuteSqlRaw(CreateTableSql);
+			//db.Database.ExecuteSqlRaw(CreateTableSql);
 		}
 		catch (Exception ex) {
 			// Database logging is best-effort; never keep the chat itself from starting over it.
