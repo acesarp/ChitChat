@@ -85,28 +85,29 @@ function App() {
     sendAudioMessage,
     sendPrivateAudioMessage,
   } = useChat(userName)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const avatarInputRef = useRef<HTMLInputElement>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
-  const recordingTimerRef = useRef<number | null>(null)
-  const activePrivateChatRef = useRef(activePrivateChat)
-  activePrivateChatRef.current = activePrivateChat
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const avatarInputRef = useRef<HTMLInputElement>(null);
+    const photoInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
+  const activePrivateChatRef = useRef(activePrivateChat);
+  activePrivateChatRef.current = activePrivateChat;
 
-  const activeMessages = activePrivateChat ? privateMessages[activePrivateChat] ?? [] : messages
+  const activeMessages = activePrivateChat ? privateMessages[activePrivateChat] ?? [] : messages;
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [activeMessages])
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [activeMessages]);
 
   function openPrivateChat(withUser: string) {
     if (withUser === userName) {
-      return
+      return;
     }
-    setActivePrivateChat(withUser)
-    setIsSidebarOpen(false)
+    setActivePrivateChat(withUser);
+    setIsSidebarOpen(false);
     try {
-      localStorage.setItem(ACTIVE_PRIVATE_CHAT_STORAGE_KEY, withUser)
+      localStorage.setItem(ACTIVE_PRIVATE_CHAT_STORAGE_KEY, withUser);
     } catch {
       // ignore storage failures (e.g. private browsing) -- session just won't persist
     }
@@ -161,19 +162,19 @@ function App() {
   }
 
   function triggerAvatarUpload() {
-    avatarInputRef.current?.click()
+      avatarInputRef.current?.click();
   }
 
   async function handleAvatarSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
+      const file = event.target.files?.[0];
+      event.target.value = '';
     if (!file || !userName) {
-      return
+        return;
     }
 
     if (file.size > MAX_AVATAR_BYTES) {
-      setAvatarError('Image must be smaller than 1MB.')
-      return
+        setAvatarError('Image must be smaller than 1MB.');
+        return;
     }
 
     setAvatarUploading(true)
@@ -189,30 +190,30 @@ function App() {
       if (!response.ok) {
         throw new Error((await response.text()) || 'Upload failed.')
       }
-      setAvatarVersion(Date.now())
+        setAvatarVersion(Date.now());
     } catch (error) {
-      setAvatarError(error instanceof Error ? error.message : 'Upload failed.')
+        setAvatarError(error instanceof Error ? error.message : 'Upload failed.');
     } finally {
-      setAvatarUploading(false)
+        setAvatarUploading(false);
     }
   }
 
   function clearRecordingTimer() {
     if (recordingTimerRef.current !== null) {
-      window.clearInterval(recordingTimerRef.current)
-      recordingTimerRef.current = null
+        window.clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
     }
   }
 
   function stopRecording() {
-    mediaRecorderRef.current?.stop()
-    mediaRecorderRef.current = null
-    clearRecordingTimer()
-    setIsRecording(false)
+      mediaRecorderRef.current?.stop();
+      mediaRecorderRef.current = null;
+      clearRecordingTimer();
+      setIsRecording(false);
   }
 
   async function startRecording() {
-    setAudioError(null)
+      setAudioError(null);
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setAudioError('Voice messages need microphone access, which this browser/context does not allow.')
@@ -268,6 +269,10 @@ function App() {
       sendAudioMessage(base64, blob.type)
     }
   }
+  
+  function uploadPhoto() {
+    avatarInputRef.current?.click()
+  } 
 
   function toggleRecording() {
     if (isRecording) {
@@ -441,6 +446,7 @@ function App() {
             maxLength={500}
             autoFocus
           />
+          <button type="button" className="photo-button" onClick={uploadPhoto} disabled={!isConnected}  title={'Send a photo'}>📸</button>
           <button
             type="button"
             className={`mic-button ${isRecording ? 'recording' : ''}`}
