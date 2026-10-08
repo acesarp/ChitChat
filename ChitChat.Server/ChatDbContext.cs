@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace SampleApp.Server;
+namespace ChitChat.Server;
 
 public class ChatDbContext(DbContextOptions<ChatDbContext> options) : DbContext(options)
 {

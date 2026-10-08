@@ -1,6 +1,6 @@
 services:
-  sample-app:
-    image: ghcr.io/acesarp/sample-app:latest
+  chit-chat:
+    image: ghcr.io/acesarp/chit-chat:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -8,10 +8,12 @@ services:
       - "${APP_PORT:-8080}:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__Chat=Server=mssql;Database=ChatDb;User Id=chatapp;Password=${MSSQL_APP_PASSWORD};TrustServerCertificate=True
+      - ConnectionStrings__Chat=Server=mssql;Database=ChatDb;User Id=${MSSQL_APP_USER:-chatapp};Password=${MSSQL_APP_PASSWORD};TrustServerCertificate=True
     depends_on:
       mssql:
         condition: service_healthy
+    volumes:
+      - app-logs:/app/logs
     restart: unless-stopped
 
   mssql:
@@ -34,3 +36,4 @@ services:
 
 volumes:
   mssql-data:
+  app-logs:

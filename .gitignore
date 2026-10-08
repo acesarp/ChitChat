@@ -231,11 +231,14 @@ _Pvt_Extensions
 # FAKE - F# Make
 .fake/
 
-# React client (Vite) - node_modules/dist already covered by Sample_App.Client/.gitignore
-SampleApp.Server/wwwroot/
+# React client (Vite) - node_modules/dist already covered by ChitChat.Client/.gitignore
+# The built client is copied into ChitChat.Server/wwwroot on publish; only the folder itself
+# is tracked (via .gitkeep), so the server finds it in local dev too.
+ChitChat.Server/wwwroot/*
+!ChitChat.Server/wwwroot/.gitkeep
 
 # Local SQLite chat database (legacy; superseded by SQL Server, kept gitignored just in case)
-SampleApp.Server/chat.db*
+ChitChat.Server/chat.db*
 
 # Secrets for local docker compose (MSSQL_SA_PASSWORD etc.) - never commit, copy from .env.example
 .env

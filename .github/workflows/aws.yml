@@ -4,7 +4,7 @@
 # Before this can run successfully you must:
 #
 # 1. Create the ECR repository (must match ECR_REPOSITORY below):
-#    aws ecr create-repository --repository-name sample-app --region us-east-1
+#    aws ecr create-repository --repository-name chit-chat --region us-east-1
 #
 # 2. Create an ECS cluster and service (must match ECS_CLUSTER / ECS_SERVICE below), and an IAM
 #    task execution role, e.g. via the ECS console "Getting Started" wizard:
@@ -26,11 +26,11 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: sample-app
-  ECS_SERVICE: sample-app-service
-  ECS_CLUSTER: sample-app-cluster
+  ECR_REPOSITORY: chit-chat
+  ECS_SERVICE: chit-chat-service
+  ECS_CLUSTER: chit-chat-cluster
   ECS_TASK_DEFINITION: .aws/task-definition.json
-  CONTAINER_NAME: sample-app
+  CONTAINER_NAME: chit-chat
 
 permissions:
   contents: read
