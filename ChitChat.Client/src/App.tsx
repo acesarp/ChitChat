@@ -9,6 +9,8 @@ const ACTIVE_PRIVATE_CHAT_STORAGE_KEY = 'sample-app.chat.activePrivateChat'
 const MAX_AVATAR_BYTES = 1_000_000
 const AVATAR_SIZE = 30
 const MAX_RECORDING_SECONDS = 60
+const MAX_PHOTO_BYTES = 5_000_000 // same cap as the hub's MaxMediaBytes
+const ALLOWED_PHOTO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 const PREFERRED_AUDIO_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
 
 function readStoredUserName(): string | null {
@@ -38,18 +40,6 @@ function formatTimestamp(iso: string): string {
     return `${day}, ${time}`;
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-    const buffer = await blob.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-  // chunked to avoid blowing the call stack on String.fromCharCode(...bytes) for large clips
-    const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-    return btoa(binary);
-}
-
 function pickSupportedAudioMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') {
       return undefined;
@@ -57,11 +47,11 @@ function pickSupportedAudioMimeType(): string | undefined {
     return PREFERRED_AUDIO_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
 }
 
-function audioMessageSrc(msg: ChatMessage | PrivateMessage, viewer: string): string {
+function mediaSrc(msg: ChatMessage | PrivateMessage, media: 'audio' | 'photo', viewer: string): string {
   if ('userName' in msg) {
-      return `${import.meta.env.BASE_URL}api/audio-message/${msg.id}`;
+      return `${import.meta.env.BASE_URL}api/${media}-message/${msg.id}`;
   }
-    return `${import.meta.env.BASE_URL}api/private-audio-message/${msg.id}?viewer=${encodeURIComponent(viewer)}`;
+    return `${import.meta.env.BASE_URL}api/private-${media}-message/${msg.id}?viewer=${encodeURIComponent(viewer)}`;
 }
 
 function App() {
@@ -74,7 +64,7 @@ function App() {
     const [avatarError, setAvatarError] = useState<string | null>(null);
     const [isRecording, setIsRecording] = useState(false);
     const [recordingSeconds, setRecordingSeconds] = useState(0);
-    const [audioError, setAudioError] = useState<string | null>(null);
+    const [mediaError, setMediaError] = useState<string | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const {
     messages,
@@ -82,10 +72,8 @@ function App() {
     onlineUsers,
     isConnected,
     sendMessage,
-    sendPrivateMessage,
-    sendAudioMessage,
-    sendPrivateAudioMessage,
-  } = useChat(userName)
+  } = useChat(userName);
+
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const avatarInputRef = useRef<HTMLInputElement>(null);
     const photoInputRef = useRef<HTMLInputElement>(null);
@@ -153,11 +141,7 @@ function App() {
       event.preventDefault();
       const trimmed = messageInput.trim();
     if (trimmed) {
-      if (activePrivateChat) {
-        sendPrivateMessage(activePrivateChat, trimmed);
-      } else {
-        sendMessage(trimmed);
-      }
+      void sendMessage({ kind: 'text', text: trimmed }, activePrivateChat ?? undefined);
       setMessageInput('');
     }
   }
@@ -165,6 +149,30 @@ function App() {
   function triggerAvatarUpload() {
       avatarInputRef.current?.click();
   }
+
+    function triggerPhotoUpload() {
+        photoInputRef.current?.click();
+    }
+
+    function handlePhotoSelected(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) {
+            return;
+        }
+
+        setMediaError(null);
+        if (!ALLOWED_PHOTO_TYPES.includes(file.type)) {
+            setMediaError('Unsupported image type. Use PNG, JPEG, WEBP, or GIF.');
+            return;
+        }
+        if (file.size > MAX_PHOTO_BYTES) {
+            setMediaError('Photo must be 5MB or smaller.');
+            return;
+        }
+
+        void sendMessage({ kind: 'photo', blob: file }, activePrivateChatRef.current ?? undefined);
+    }
 
   async function handleAvatarSelected(event: ChangeEvent<HTMLInputElement>) {
       const file = event.target.files?.[0];
@@ -215,11 +223,11 @@ function App() {
   }
 
   async function startRecording() {
-      setAudioError(null);
+      setMediaError(null);
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       logger.warn('Voice messages unavailable: no navigator.mediaDevices.getUserMedia in this browser/context.')
-      setAudioError('Voice messages need microphone access, which this browser/context does not allow.')
+      setMediaError('Voice messages need microphone access, which this browser/context does not allow.')
       return
     }
 
@@ -257,7 +265,7 @@ function App() {
       }, 1000); 
     } catch (error) {
         logger.warn('Could not start voice recording:', error);
-        setAudioError('Microphone access was denied or is unavailable.');
+        setMediaError('Microphone access was denied or is unavailable.');
     }
   }
 
@@ -265,40 +273,16 @@ function App() {
     if (blob.size === 0) {
         return;
     }
-      const base64 = await blobToBase64(blob);
-      const target = activePrivateChatRef.current;
-    if (target) {
-        sendPrivateAudioMessage(target, base64, blob.type);
-    } else {
-        sendAudioMessage(base64, blob.type);
-    }
+      await sendMessage({ kind: 'audio', blob }, activePrivateChatRef.current ?? undefined);
   }
 
   function toggleRecording() {
-    if (isRecording) {
-      stopRecording()
-    } else {
-      void startRecording()
-    }
-    }
-
-    /*--------------------- photo upload ---------------------*/
-    function uploadPhoto() {
-        photoInputRef.current?.click();
-    };
-    async function sendPhoto(blob: Blob) {
-        if (blob.size === 0) {
-            return;
-        }
-        const base64 = await blobToBase64(blob);
-        const target = activePrivateChatRef.current;
-        if (target) {
-            sendPrivatePhotoMessage(target, base64, blob.type);
+        if (isRecording) {
+            stopRecording();
         } else {
-            sendPhotoMessage(base64, blob.type);
+            void startRecording();
         }
     }
-/*--------------------------------------------------------*/
 
   if (!userName) {
     return (
@@ -323,157 +307,149 @@ function App() {
 
   const privateChatPartners = Object.keys(privateMessages)
 
-  return (
-    <div className="chat-layout">
-      {isSidebarOpen && <div className="sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} />}
+    return (
+        <div className="chat-layout">
+            {isSidebarOpen && <div className="sidebar-backdrop" onClick={() => setIsSidebarOpen(false)} />}
 
-      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
-        <div className="brand-logo sidebar-brand">
-          <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Chit Chat" />
-        </div>
-        <h2>Lobby</h2>
-        <p className={`status ${isConnected ? 'online' : 'offline'}`}> {isConnected ? 'Connected' : 'Connecting…'} </p>
+            <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
+                <div className="brand-logo sidebar-brand">
+                    <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Chit Chat" />
+                </div>
+                <h2>Lobby</h2>
+                <p className={`status ${isConnected ? 'online' : 'offline'}`}> {isConnected ? 'Connected' : 'Connecting…'} </p>
 
-        <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarSelected} className="avatar-input"/>
+                <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarSelected} className="avatar-input" />
 
-        <h3>Online ({onlineUsers.length})</h3>
-        <ul className="online-users">
-          {onlineUsers.map((name) =>  name === userName ? (
-              <li key={name}>
-                <span className="user-entry self">
-                  <button
-                    type="button"
-                    className="avatar-button"
-                    onClick={triggerAvatarUpload}
-                    disabled={avatarUploading}
-                    title={avatarUploading ? 'Uploading…' : 'Change your avatar'}
-                  >
-                    <Avatar userName={name} src={avatarUrl(name, avatarVersion)} size={AVATAR_SIZE} />
-                  </button>
-                  {name} (you)
-                </span>
-              </li>
-            ) : (
-              <li key={name}>
-                <button
-                  type="button"
-                  className={`user-entry ${activePrivateChat === name ? 'active' : ''}`}
-                  onClick={() => openPrivateChat(name)}
-                >
-                  <Avatar userName={name} src={avatarUrl(name)} size={AVATAR_SIZE} />
-                  {name}
-                </button>
-              </li>
-            ),
-          )}
-        </ul>
-        {avatarError && <p className="avatar-error">{avatarError}</p>}
+                <h3>Online ({onlineUsers.length})</h3>
+                <ul className="online-users">
+                    {onlineUsers.map((name) => name === userName ? (
+                        <li key={name}>
+                            <span className="user-entry self">
+                                <button
+                                    type="button"
+                                    className="avatar-button"
+                                    onClick={triggerAvatarUpload}
+                                    disabled={avatarUploading}
+                                    title={avatarUploading ? 'Uploading…' : 'Change your avatar'}
+                                >
+                                    <Avatar userName={name} src={avatarUrl(name, avatarVersion)} size={AVATAR_SIZE} />
+                                </button>
+                                {name} (you)
+                            </span>
+                        </li>
+                    ) : (
+                        <li key={name}>
+                            <button
+                                type="button"
+                                className={`user-entry ${activePrivateChat === name ? 'active' : ''}`}
+                                onClick={() => openPrivateChat(name)}
+                            >
+                                <Avatar userName={name} src={avatarUrl(name)} size={AVATAR_SIZE} />
+                                {name}
+                            </button>
+                        </li>
+                    ),
+                    )}
+                </ul>
+                {avatarError && <p className="avatar-error">{avatarError}</p>}
 
-        {privateChatPartners.length > 0 && (
-          <>
-            <h3>Private chats</h3>
-            <ul className="online-users">
-              {privateChatPartners.map((name) => (
-                <li key={name}>
-                  <button
-                    type="button"
-                    className={`user-entry ${activePrivateChat === name ? 'active' : ''}`}
-                    onClick={() => openPrivateChat(name)}
-                  >
-                    <Avatar userName={name} src={avatarUrl(name)} size={AVATAR_SIZE} />
-                    {name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        <button type="button" className="leave-button" onClick={handleLeave}> Leave chat </button>
-      </aside>
-
-      <main className="chat-main">
-        <div className="chat-header">
-          <button
-            type="button"
-            className="menu-button"
-            onClick={() => setIsSidebarOpen(true)}
-            aria-label="Open menu"
-          >
-            ☰
-          </button>
-          {activePrivateChat ? (
-            <>
-              <button type="button" className="back-button" onClick={backToLobby}>
-                ← Lobby
-              </button>
-              <span className="chat-header-title">Private chat with {activePrivateChat}</span>
-            </>
-          ) : (
-            <span className="chat-header-title">Lobby</span>
-          )}
-        </div>
-
-        <div className="messages">
-          {activeMessages.map((msg) => {
-            const author = 'userName' in msg ? msg.userName : msg.fromUserName
-            const isSystem = author === 'system'
-            const isOwn = author === userName
-            return (
-              <div key={msg.id} className={`message ${isOwn ? 'own' : ''} ${isSystem ? 'system' : ''}`}>
-                {!isSystem && (
-                  <div className="message-header">
-                    <Avatar userName={author} src={avatarUrl(author, isOwn ? avatarVersion : undefined)} size={AVATAR_SIZE} />
-                    <span className="message-author">{author}</span>
-                    <span className="message-time">{formatTimestamp(msg.sentAt)}</span>
-                  </div>
+                {privateChatPartners.length > 0 && (
+                    <>
+                        <h3>Private chats</h3>
+                        <ul className="online-users">
+                            {privateChatPartners.map((name) => (
+                                <li key={name}>
+                                    <button type="button" className={`user-entry ${activePrivateChat === name ? 'active' : ''}`} onClick={() => openPrivateChat(name)} >
+                                        <Avatar userName={name} src={avatarUrl(name)} size={AVATAR_SIZE} />
+                                        {name}
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </>
                 )}
-                {msg.audioContentType ? (
-                  <audio controls className="message-audio" src={audioMessageSrc(msg, userName)} />
-                ) : (
-                  <span className="message-text">{msg.message}</span>
-                )}
-              </div>
-            )
-          })}
-          <div ref={messagesEndRef} />
+
+                <button type="button" className="leave-button" onClick={handleLeave}> Leave chat </button>
+            </aside>
+
+            <main className="chat-main">
+                <div className="chat-header">
+                    <button
+                        type="button"
+                        className="menu-button"
+                        onClick={() => setIsSidebarOpen(true)}
+                        aria-label="Open menu"
+                    >
+                        ☰
+                    </button>
+                    {activePrivateChat ? (
+                        <>
+                            <button type="button" className="back-button" onClick={backToLobby}>
+                                ← Lobby
+                            </button>
+                            <span className="chat-header-title">Private chat with {activePrivateChat}</span>
+                        </>
+                    ) : (
+                        <span className="chat-header-title">Lobby</span>
+                    )}
+                </div>
+
+                <div className="messages">
+                    {activeMessages.map((msg) => {
+                        const author = 'userName' in msg ? msg.userName : msg.fromUserName
+                        const isSystem = author === 'system'
+                        const isOwn = author === userName
+                        return (
+                            <div key={msg.id} className={`message ${isOwn ? 'own' : ''} ${isSystem ? 'system' : ''}`}>
+                                {!isSystem && (
+                                    <div className="message-header">
+                                        <Avatar userName={author} src={avatarUrl(author, isOwn ? avatarVersion : undefined)} size={AVATAR_SIZE} />
+                                        <span className="message-author">{author}</span>
+                                        <span className="message-time">{formatTimestamp(msg.sentAt)}</span>
+                                    </div>
+                                )}
+                                {msg.photoContentType ? (
+                                    <a href={mediaSrc(msg, 'photo', userName)} target="_blank" rel="noopener noreferrer">
+                                        <img className="message-photo" src={mediaSrc(msg, 'photo', userName)} alt={`Photo from ${author}`} loading="lazy" />
+                                    </a>
+                                ) : msg.audioContentType ? (
+                                    <audio controls className="message-audio" src={mediaSrc(msg, 'audio', userName)} />
+                                ) : (
+                                    <span className="message-text">{msg.message}</span>
+                                )}
+                            </div>
+                        )
+                    })}
+                    <div ref={messagesEndRef} />
+                </div>
+
+                {mediaError && <p className="avatar-error audio-error">{mediaError}</p>}
+
+                <form className="message-form" onSubmit={handleSend}>
+                    <input
+                        value={messageInput}
+                        onChange={(event) => setMessageInput(event.target.value)}
+                        placeholder={activePrivateChat ? `Message ${activePrivateChat}…` : 'Type a message…'}
+                        maxLength={500}
+                        autoFocus
+                    />
+
+                    <button type="button" className="photo-button" disabled={!isConnected} title={'Send a photo'} onClick={triggerPhotoUpload}>📸</button>
+                    <input ref={photoInputRef} type="file" accept={ALLOWED_PHOTO_TYPES.join(',')} onChange={handlePhotoSelected} className="photo-input" />
+                    <button
+                        type="button"
+                        className={`mic-button ${isRecording ? 'recording' : ''}`}
+                        onClick={toggleRecording}
+                        disabled={!isConnected}
+                        title={isRecording ? 'Stop and send' : 'Record a voice message'}
+                    >
+                        {isRecording ? `■ ${recordingSeconds}s` : '🎤'}
+                    </button>
+                    <button type="submit" disabled={!isConnected}> Send </button>
+                </form>
+            </main>
         </div>
+    );
+};
 
-        {audioError && <p className="avatar-error audio-error">{audioError}</p>}
-
-        <form className="message-form" onSubmit={handleSend}>
-          <input
-            value={messageInput}
-            onChange={(event) => setMessageInput(event.target.value)}
-            placeholder={activePrivateChat ? `Message ${activePrivateChat}…` : 'Type a message…'}
-            maxLength={500}
-            autoFocus
-                  />
-
-                  <button type="button" className="photo-button" onClick={uploadPhoto} disabled={!isConnected} title={'Send a photo'}>📸</button>
-                  <input
-                      ref={photoInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif"
-                      onChange={handlePhotoSelected}
-                      className="photo-input"
-                  />
-          <button
-            type="button"
-            className={`mic-button ${isRecording ? 'recording' : ''}`}
-            onClick={toggleRecording}
-            disabled={!isConnected}
-            title={isRecording ? 'Stop and send' : 'Record a voice message'}
-          >
-            {isRecording ? `■ ${recordingSeconds}s` : '🎤'}
-          </button>
-          <button type="submit" disabled={!isConnected}>
-            Send
-          </button>
-        </form>
-      </main>
-    </div>
-  )
-}
-
-export default App
+export default App;

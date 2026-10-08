@@ -8,7 +8,7 @@ export interface ChatMessage {
   message: string;
   sentAt: string;
   audioContentType?: string | null;
-    photoContentType?: string | null;
+  photoContentType?: string | null;
 }
 
 export interface PrivateMessage {
@@ -19,6 +19,39 @@ export interface PrivateMessage {
     sentAt: string;
     audioContentType?: string | null;
 	photoContentType?: string | null;
+}
+
+export type OutgoingMessage =
+    | { kind: 'text'; text: string }
+    | { kind: 'audio'; blob: Blob }
+    | { kind: 'photo'; blob: Blob };
+
+// Shape of the hub's SendMessageRequest.
+interface SendMessageRequest {
+    kind: OutgoingMessage['kind'];
+    toUserName?: string;
+    text?: string;
+    dataBase64?: string;
+    contentType?: string;
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = '';
+    // chunked to avoid blowing the call stack on String.fromCharCode(...bytes) for large files
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+}
+
+async function toRequest(message: OutgoingMessage, toUserName?: string): Promise<SendMessageRequest> {
+    if (message.kind === 'text') {
+        return { kind: 'text', toUserName, text: message.text };
+    }
+    // The JSON hub protocol has no binary type, so media goes as base64 text.
+    return { kind: message.kind, toUserName, dataBase64: await blobToBase64(message.blob), contentType: message.blob.type };
 }
 
 // System messages ("X joined") are synthesized client-side, never stored -- give them a
@@ -169,8 +202,8 @@ export function useChat(userName: string | null) {
       if (disposed) {
           return;
       }
-      const delay = RECONNECT_DELAYS_MS[Math.min(startAttempts++, RECONNECT_DELAYS_MS.length - 1)]
-      retryTimer = setTimeout(connect, delay)
+      const delay = RECONNECT_DELAYS_MS[Math.min(startAttempts++, RECONNECT_DELAYS_MS.length - 1)]; 
+        retryTimer = setTimeout(connect, delay);
     }
 
     connection.onclose((error) => {
@@ -197,65 +230,25 @@ export function useChat(userName: string | null) {
     }
   }, [userName]);
 
-  const sendMessage = useCallback(
-    (message: string) => {
-      const connection = connectionRef.current;
-      if (!connection || connection.state !== HubConnectionState.Connected || !userName) {
-        return;
-      }
+    // One send for every kind of message. No `toUserName` = lobby, otherwise a private message.
+    const sendMessage = useCallback(async (message: OutgoingMessage, toUserName?: string) => {
+        const connection = connectionRef.current;
+        if (!connection || connection.state !== HubConnectionState.Connected) {
+            return;
+        }
 
-      connection.invoke('SendMessage', message).catch((error) => logger.error('Send failed:', error));
-    },
-    [userName],
-  );
+        try {
+            await connection.invoke('SendMessage', await toRequest(message, toUserName));
+        } catch (error) {
+            logger.error(`Sending ${message.kind} message failed:`, error);
+        }
+    }, []);
 
-  const sendPrivateMessage = useCallback(
-        (toUserName: string, message: string) => {
-              const connection = connectionRef.current;
-          if (!connection || connection.state !== HubConnectionState.Connected || !userName) {
-              return;
-          }
-
-          connection.invoke('SendPrivateMessage', toUserName, message)
-                            .catch((error) => logger.error('Private send failed:', error));
-        },
-        [userName],
-  );
-
-    const sendAudioMessage = useCallback(
-        (audioBase64: string, contentType: string) => {
-            const connection = connectionRef.current;
-            if (!connection || connection.state !== HubConnectionState.Connected || !userName) {
-                return;
-            }
-
-            connection.invoke('SendAudioMessage', audioBase64, contentType)
-                .catch((error) => logger.error('Audio send failed:', error));
-        },
-        [userName],
-    );
-
-    const sendPrivateAudioMessage = useCallback(
-        (toUserName: string, audioBase64: string, contentType: string) => {
-            const connection = connectionRef.current;
-            if (!connection || connection.state !== HubConnectionState.Connected || !userName) {
-                return;
-            }
-
-            connection.invoke('SendPrivateAudioMessage', toUserName, audioBase64, contentType)
-                .catch((error) => logger.error('Private audio send failed:', error));
-        },
-        [userName],
-    );
-
-  return {
-    messages,
-    privateMessages,
-    onlineUsers,
-    isConnected,
-    sendMessage,
-    sendPrivateMessage,
-    sendAudioMessage,
-    sendPrivateAudioMessage,
-  }
+    return {
+        messages,
+        privateMessages,
+        onlineUsers,
+        isConnected,
+        sendMessage,
+    };
 }

@@ -220,7 +220,8 @@ button.user-entry:hover {
   opacity: 0.6;
 }
 
-.avatar-input {
+.avatar-input,
+.photo-input {
   display: none;
 }
 
@@ -370,6 +371,13 @@ button.user-entry:hover {
   max-width: 220px;
 }
 
+.message-photo {
+  display: block;
+  max-width: min(240px, 100%);
+  max-height: 240px;
+  border-radius: 8px;
+}
+
 .message-form {
   display: flex;
   gap: 0.5rem;
@@ -382,7 +390,8 @@ button.user-entry:hover {
   min-width: 0;
 }
 
-.mic-button {
+.mic-button,
+.photo-button {
   padding: 0.6rem 0.8rem;
   border-radius: 8px;
   border: 1px solid #334155;
@@ -393,11 +402,13 @@ button.user-entry:hover {
   min-width: 2.75rem;
 }
 
-.mic-button:hover:not(:disabled) {
+.mic-button:hover:not(:disabled),
+.photo-button:hover:not(:disabled) {
   background: #334155;
 }
 
-.mic-button:disabled {
+.mic-button:disabled,
+.photo-button:disabled {
   color: #475569;
   cursor: not-allowed;
 }

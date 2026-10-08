@@ -11,7 +11,7 @@ public class ChatHub(ChatDbContext db) : Hub {
 	private const int MaxUserNameLength = 30;
 	private const int MaxMessageLength = 500;
 	private const int MaxMessagesPerWindow = 10;
-	private const int MaxMediaBytes = 5_000_000; // 5 MB, generous headroom over a 60s opus clip
+	private const int MaxMediaBytes = 5_000_000; // 5 MB: headroom over a 60s opus clip, and room for a phone photo
 	private static readonly TimeSpan RateWindow = TimeSpan.FromSeconds(10);
 
 	private static readonly ConcurrentDictionary<string, string> ConnectedUsers = new();
@@ -32,13 +32,13 @@ public class ChatHub(ChatDbContext db) : Hub {
 		// account system -- same identity model the rest of the hub already relies on.
 		await Groups.AddToGroupAsync(Context.ConnectionId, trimmed);
 
-		// Audio bytes are never included in history/broadcast payloads -- clients fetch them
-		// lazily from the audio-message endpoints via the row's Id instead.
+		// Audio/photo bytes are never included in history/broadcast payloads -- clients fetch them
+		// lazily from the media endpoints via the row's Id instead.
 		var history = await db.Messages
 			.OrderByDescending(m => m.Id)
 			.Take(HistorySize)
 			.OrderBy(m => m.Id)
-			.Select(m => new { m.Id, m.UserName, m.Message, m.SentAt, m.AudioContentType })
+			.Select(m => new { m.Id, m.UserName, m.Message, m.SentAt, m.AudioContentType, m.PhotoContentType })
 			.ToListAsync();
 
 		var privateHistory = await db.PrivateMessages
@@ -46,7 +46,7 @@ public class ChatHub(ChatDbContext db) : Hub {
 			.OrderByDescending(m => m.Id)
 			.Take(PrivateHistorySize)
 			.OrderBy(m => m.Id)
-			.Select(m => new { m.Id, m.FromUserName, m.ToUserName, m.Message, m.SentAt, m.AudioContentType })
+			.Select(m => new { m.Id, m.FromUserName, m.ToUserName, m.Message, m.SentAt, m.AudioContentType, m.PhotoContentType })
 			.ToListAsync();
 
 		await Clients.Caller.SendAsync("MessageHistory", history);
@@ -56,10 +56,16 @@ public class ChatHub(ChatDbContext db) : Hub {
 		await Clients.All.SendAsync("OnlineUsers", ConnectedUsers.Values.Distinct());
 	}
 
-	public async Task SendMessage(string message) {
+	private static readonly HashSet<string> AllowedPhotoContentTypes = new(StringComparer.OrdinalIgnoreCase) {
+		"image/png", "image/jpeg", "image/webp", "image/gif"
+	};
+
+	// One entry point for every kind of message: lobby or private (ToUserName set), text, voice
+	// or photo. Each kind keeps its own validation; only the routing and storage are shared.
+	public async Task SendMessage(SendMessageRequest request) {
 		// The sender's identity comes from the connection's own Join record, never from the
-		// caller's input -- otherwise any client could broadcast messages under anyone else's name.
-		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var userName)) {
+		// caller's input -- otherwise any client could send messages under anyone else's name.
+		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var fromUserName)) {
 			throw new HubException("Join the chat before sending messages.");
 		}
 
@@ -67,75 +73,40 @@ public class ChatHub(ChatDbContext db) : Hub {
 			throw new HubException("You're sending messages too fast. Please slow down.");
 		}
 
-		var trimmed = (message ?? string.Empty).Trim();
-		if (trimmed.Length == 0) {
-			return;
-		}
-
-		if (trimmed.Length > MaxMessageLength) {
-			trimmed = trimmed[..MaxMessageLength];
-		}
-
-		var entity = new ChatMessageEntity {
-			UserName = userName,
-			Message = trimmed,
-			SentAt = DateTimeOffset.UtcNow
+		ArgumentNullException.ThrowIfNull(request);
+		var toUserName = NormalizeRecipient(request.ToUserName, fromUserName);
+		var content = request.Kind switch {
+			MessageKind.Text => TextContent(request.Text),
+			MessageKind.Audio => MediaContent(request, IsAllowedAudioType, "voice message"),
+			MessageKind.Photo => MediaContent(request, AllowedPhotoContentTypes.Contains, "photo"),
+			_ => throw new HubException("Unsupported message type."),
 		};
-		db.Messages.Add(entity);
-		await db.SaveChangesAsync();
-
-		await Clients.All.SendAsync("ReceiveMessage", new {
-			id = entity.Id,
-			userName = entity.UserName,
-			message = entity.Message,
-			sentAt = entity.SentAt,
-			audioContentType = entity.AudioContentType
-		});
-	}
-
-	public async Task SendPhotoMessage(string imageBase64, string contentType) => await SendMediaMessage(imageBase64, contentType);
-
-	public async Task SendAudioMessage(string audioBase64, string contentType) => await SendMediaMessage(audioBase64, contentType);
-
-	public async Task SendMediaMessage(string dataBase64, string contentType) {
-		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var userName)) {
-			throw new HubException("Join the chat before sending messages.");
-		}
-		if (IsRateLimited(Context.ConnectionId)) {
-			throw new HubException("You're sending messages too fast. Please slow down.");
+		if (content is null) {
+			return; // blank text -- nothing to send
 		}
 
-		var mediaData = DecodeMedia(dataBase64);
-		ValidateMedia(mediaData, contentType);
-
-		byte[]? audioData = null;
-		byte[]? photoData = null;
-		string photoContentType = "";
-		string audioContentType = "";
-		if (contentType.StartsWith("audio/")) {
-			audioData = mediaData;
-			audioContentType = contentType;
-		}
-		else if (contentType.StartsWith("image/")) {
-			photoData = mediaData;
-			photoContentType = contentType;
+		if (toUserName is null) {
+			await SendLobbyMessage(fromUserName, content);
 		}
 		else {
-			throw new HubException($"Unsupported media format: {contentType}");
+			await SendPrivateMessage(fromUserName, toUserName, content);
 		}
+	}
 
+	private async Task SendLobbyMessage(string userName, MessageContent content) {
 		var entity = new ChatMessageEntity {
 			UserName = userName,
-			Message = "",
-			AudioData = audioData,
-			PhotoData = photoData,
-			AudioContentType = audioContentType,
-			PhotoContentType = photoContentType,
+			Message = content.Text,
+			AudioData = content.AudioData,
+			AudioContentType = content.AudioContentType,
+			PhotoData = content.PhotoData,
+			PhotoContentType = content.PhotoContentType,
 			SentAt = DateTimeOffset.UtcNow
 		};
 		db.Messages.Add(entity);
 		await db.SaveChangesAsync();
 
+		// Media bytes never go out in broadcasts -- clients fetch them from the media endpoints.
 		await Clients.All.SendAsync("ReceiveMessage", new {
 			id = entity.Id,
 			userName = entity.UserName,
@@ -146,43 +117,15 @@ public class ChatHub(ChatDbContext db) : Hub {
 		});
 	}
 
-	public async Task SendPrivateMessage(string toUserName, string message) {
-		// Same identity rule as SendMessage: the sender comes from the connection's Join
-		// record, never from caller input.
-		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var fromUserName)) {
-			throw new HubException("Join the chat before sending messages.");
-		}
-
-		if (IsRateLimited(Context.ConnectionId)) {
-			throw new HubException("You're sending messages too fast. Please slow down.");
-		}
-
-		var trimmedTo = (toUserName ?? string.Empty).Trim();
-		if (trimmedTo.Length == 0) {
-			throw new HubException("Choose someone to message.");
-		}
-
-		if (trimmedTo.Length > MaxUserNameLength) {
-			trimmedTo = trimmedTo[..MaxUserNameLength];
-		}
-
-		if (string.Equals(trimmedTo, fromUserName, StringComparison.Ordinal)) {
-			throw new HubException("You can't send a private message to yourself.");
-		}
-
-		var trimmedMessage = (message ?? string.Empty).Trim();
-		if (trimmedMessage.Length == 0) {
-			return;
-		}
-
-		if (trimmedMessage.Length > MaxMessageLength) {
-			trimmedMessage = trimmedMessage[..MaxMessageLength];
-		}
-
+	private async Task SendPrivateMessage(string fromUserName, string toUserName, MessageContent content) {
 		var entity = new PrivateMessageEntity {
 			FromUserName = fromUserName,
-			ToUserName = trimmedTo,
-			Message = trimmedMessage,
+			ToUserName = toUserName,
+			Message = content.Text,
+			AudioData = content.AudioData,
+			AudioContentType = content.AudioContentType,
+			PhotoData = content.PhotoData,
+			PhotoContentType = content.PhotoContentType,
 			SentAt = DateTimeOffset.UtcNow
 		};
 		db.PrivateMessages.Add(entity);
@@ -194,87 +137,89 @@ public class ChatHub(ChatDbContext db) : Hub {
 			toUserName = entity.ToUserName,
 			message = entity.Message,
 			sentAt = entity.SentAt,
-			audioContentType = entity.AudioContentType
+			audioContentType = entity.AudioContentType,
+			photoContentType = entity.PhotoContentType
 		};
 
 		// Sent to both groups: the recipient gets it, and the sender's own group delivers the
 		// echo (and keeps any other tab/device logged in under the same name in sync).
-		await Clients.Group(trimmedTo).SendAsync("ReceivePrivateMessage", payload);
+		await Clients.Group(toUserName).SendAsync("ReceivePrivateMessage", payload);
 		await Clients.Group(fromUserName).SendAsync("ReceivePrivateMessage", payload);
 	}
 
-	public async Task SendPrivateAudioMessage(string toUserName, string audioBase64, string contentType) {
-		if (!ConnectedUsers.TryGetValue(Context.ConnectionId, out var fromUserName)) {
-			throw new HubException("Join the chat before sending messages.");
+	// Null means the lobby.
+	private static string? NormalizeRecipient(string? toUserName, string fromUserName) {
+		if (toUserName is null) {
+			return null;
 		}
 
-		if (IsRateLimited(Context.ConnectionId)) {
-			throw new HubException("You're sending messages too fast. Please slow down.");
-		}
-
-		var trimmedTo = (toUserName ?? string.Empty).Trim();
-		if (trimmedTo.Length == 0) {
+		var trimmed = toUserName.Trim();
+		if (trimmed.Length == 0) {
 			throw new HubException("Choose someone to message.");
 		}
 
-		if (trimmedTo.Length > MaxUserNameLength) {
-			trimmedTo = trimmedTo[..MaxUserNameLength];
+		if (trimmed.Length > MaxUserNameLength) {
+			trimmed = trimmed[..MaxUserNameLength];
 		}
 
-		if (string.Equals(trimmedTo, fromUserName, StringComparison.Ordinal)) {
+		if (string.Equals(trimmed, fromUserName, StringComparison.Ordinal)) {
 			throw new HubException("You can't send a private message to yourself.");
 		}
 
-		var audioData = DecodeMedia(audioBase64);
-		ValidateMedia(audioData, contentType);
-
-		var entity = new PrivateMessageEntity {
-			FromUserName = fromUserName,
-			ToUserName = trimmedTo,
-			Message = "",
-			AudioData = audioData,
-			AudioContentType = contentType,
-			SentAt = DateTimeOffset.UtcNow
-		};
-		db.PrivateMessages.Add(entity);
-		await db.SaveChangesAsync();
-
-		var payload = new {
-			id = entity.Id,
-			fromUserName = entity.FromUserName,
-			toUserName = entity.ToUserName,
-			message = entity.Message,
-			sentAt = entity.SentAt,
-			audioContentType = entity.AudioContentType
-		};
-
-		await Clients.Group(trimmedTo).SendAsync("ReceivePrivateMessage", payload);
-		await Clients.Group(fromUserName).SendAsync("ReceivePrivateMessage", payload);
+		return trimmed;
 	}
 
-	private static byte[] DecodeMedia(string base64) {
-		// The JSON hub protocol has no native binary type, so the client sends audio as base64
+	private static MessageContent? TextContent(string? text) {
+		var trimmed = (text ?? string.Empty).Trim();
+		if (trimmed.Length == 0) {
+			return null;
+		}
+
+		if (trimmed.Length > MaxMessageLength) {
+			trimmed = trimmed[..MaxMessageLength];
+		}
+
+		return new MessageContent { Text = trimmed };
+	}
+
+	private static MessageContent MediaContent(SendMessageRequest request, Func<string, bool> isAllowedType, string description) {
+		var contentType = request.ContentType;
+		if (string.IsNullOrWhiteSpace(contentType) || !isAllowedType(contentType)) {
+			throw new HubException($"Unsupported {description} format.");
+		}
+
+		// The JSON hub protocol has no native binary type, so the client sends media as base64
 		// text rather than a byte[] argument (which would otherwise serialize to "{}").
+		byte[] data;
 		try {
-			return Convert.FromBase64String(base64 ?? string.Empty);
+			data = Convert.FromBase64String(request.DataBase64 ?? string.Empty);
 		}
 		catch (FormatException) {
-			throw new HubException("Invalid audio data.");
+			throw new HubException($"Invalid {description} data.");
 		}
+
+		if (data.Length == 0) {
+			throw new HubException($"No {description} received.");
+		}
+
+		if (data.Length > MaxMediaBytes) {
+			throw new HubException($"The {description} is too large.");
+		}
+
+		return request.Kind == MessageKind.Audio
+			? new MessageContent { AudioData = data, AudioContentType = contentType }
+			: new MessageContent { PhotoData = data, PhotoContentType = contentType };
 	}
 
-	private static void ValidateMedia(byte[] mediaData, string contentType) {
-		if (mediaData is null || mediaData.Length == 0) {
-			throw new HubException("No media received.");
-		}
+	private static bool IsAllowedAudioType(string contentType) =>
+		contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase);
 
-		if (mediaData.Length > MaxMediaBytes) {
-			throw new HubException("Media is too large.");
-		}
-
-		if (string.IsNullOrWhiteSpace(contentType) || !contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)) {
-			throw new HubException("Unsupported media format.");
-		}
+	private sealed record MessageContent {
+		public string Text { get; init; } = "";
+		public byte[]? AudioData { get; init; }
+		public string? AudioContentType { get; init; }
+		public byte[]? PhotoData { get; init; }
+		public string? PhotoContentType { get; init; }
 	}
 
 	private static bool IsRateLimited(string connectionId) {
@@ -298,5 +243,12 @@ public class ChatHub(ChatDbContext db) : Hub {
 		}
 
 		await base.OnDisconnectedAsync(exception);
+	}
+
+	internal static string? UserNameOf(HubCallerContext context) {
+		if (ConnectedUsers.TryGetValue(context.ConnectionId, out var userName)) {
+			return userName;
+		}
+		return null;
 	}
 }

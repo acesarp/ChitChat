@@ -6,6 +6,9 @@ using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Events;
 
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 // Bootstrap logger so startup failures (bad config, DB unreachable) are still written somewhere;
 // it's replaced by the fully configured logger once the host is built.
 Log.Logger = new LoggerConfiguration()
@@ -33,10 +36,12 @@ try {
 	builder.Services.AddOpenApi();
 	builder.Services.AddSignalR(options => {
 		options.AddFilter<HubLoggingFilter>();
-		// Default is 32KB, too small for a voice message sent as a hub method argument. Audio
-		// travels base64-encoded (~1.33x inflation) on top of the 5MB raw-audio cap in ChatHub.
+		// Default is 32KB, too small for a voice message or photo sent as a hub method argument.
+		// Media travels base64-encoded (~1.33x inflation) on top of the 5MB raw cap in ChatHub.
 		options.MaximumReceiveMessageSize = 8 * 1024 * 1024;
-	});
+	}).AddJsonProtocol(options =>
+		// SendMessageRequest.Kind arrives as "text" / "audio" / "photo".
+		options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
 
 	builder.Services.AddDbContext<ChatDbContext>(options =>
 		options.UseSqlServer(
@@ -159,24 +164,50 @@ try {
 		return Results.File(entity.AudioData, entity.AudioContentType ?? "application/octet-stream");
 	});
 
+	app.MapGet("/api/photo-message/{id:int}", async (int id, ChatDbContext db) => {
+		var entity = await db.Messages.FindAsync(id);
+		if (entity?.PhotoData is null) {
+			return Results.NotFound();
+		}
+
+		return Results.File(entity.PhotoData, entity.PhotoContentType ?? "application/octet-stream");
+	});
+
+	// Not real auth (there are no accounts), but keeps a stranger who merely guesses an id from
+	// seeing someone else's private voice message or photo -- the caller has to at least claim
+	// to be one of the two parties, same trust level as the rest of the app.
+	static bool IsParty(PrivateMessageEntity entity, string? viewer) {
+		var trimmedViewer = (viewer ?? string.Empty).Trim();
+		return string.Equals(trimmedViewer, entity.FromUserName, StringComparison.Ordinal)
+			|| string.Equals(trimmedViewer, entity.ToUserName, StringComparison.Ordinal);
+	}
+
 	app.MapGet("/api/private-audio-message/{id:int}", async (int id, string viewer, ChatDbContext db, ILogger<Program> logger) => {
 		var entity = await db.PrivateMessages.FindAsync(id);
 		if (entity?.AudioData is null) {
 			return Results.NotFound();
 		}
 
-		// Not real auth (there are no accounts), but keeps a stranger who merely guesses an id
-		// from listening in on someone else's private voice message -- the caller has to at
-		// least claim to be one of the two parties, same trust level as the rest of the app.
-		var trimmedViewer = (viewer ?? string.Empty).Trim();
-		var isParty = string.Equals(trimmedViewer, entity.FromUserName, StringComparison.Ordinal)
-			|| string.Equals(trimmedViewer, entity.ToUserName, StringComparison.Ordinal);
-		if (!isParty) {
-			logger.LogWarning("Denied private audio message {MessageId} to {Viewer}, who isn't one of its two parties", id, trimmedViewer);
+		if (!IsParty(entity, viewer)) {
+			logger.LogWarning("Denied private audio message {MessageId} to {Viewer}, who isn't one of its two parties", id, viewer);
 			return Results.NotFound();
 		}
 
 		return Results.File(entity.AudioData, entity.AudioContentType ?? "application/octet-stream");
+	});
+
+	app.MapGet("/api/private-photo-message/{id:int}", async (int id, string viewer, ChatDbContext db, ILogger<Program> logger) => {
+		var entity = await db.PrivateMessages.FindAsync(id);
+		if (entity?.PhotoData is null) {
+			return Results.NotFound();
+		}
+
+		if (!IsParty(entity, viewer)) {
+			logger.LogWarning("Denied private photo message {MessageId} to {Viewer}, who isn't one of its two parties", id, viewer);
+			return Results.NotFound();
+		}
+
+		return Results.File(entity.PhotoData, entity.PhotoContentType ?? "application/octet-stream");
 	});
 
 	app.MapClientLogs();
