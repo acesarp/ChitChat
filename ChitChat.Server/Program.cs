@@ -31,7 +31,7 @@ builder.Services.AddCors(options => {
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope()) {
-	cope.ServiceProvider.GetRequiredService<ChatDbContext>().Database.EnsureCreated();
+	scope.ServiceProvider.GetRequiredService<ChatDbContext>().Database.EnsureCreated();
 }
 
 if (app.Environment.IsDevelopment()) {
