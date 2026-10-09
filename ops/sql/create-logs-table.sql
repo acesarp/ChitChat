@@ -2,11 +2,6 @@
 -- the server's logs and the browser's (posted to /api/client-logs, SourceContext =
 -- 'ChitChat.Client') into it. On startup the server creates it itself when its login is allowed
 -- to (sa, in local dev); production's chatapp login isn't, so run this once there. Safe to re-run.
---
--- DDL kept identical to DatabaseLogging.CreateTableSql in ChitChat.Server.
---
--- Run with: sqlcmd -S <host> -U sa -P <sa password> -C -i create-logs-table.sql
--- Then grant access to the app login with init-app-login.sql.
 
 USE ChatDb;
 GO
